@@ -1,8 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const samplingIds = ['resolution', 'levels', 'budget', 'alpha', 'white'];
-const transformIds = ['size', 'x', 'y', 'rotation', 'opacity'];
-let source = null, model = null, quads = [], blk = '', basename = 'color_sight', timer, loadId = 0;
+const samplingIds = ['resolution', 'levels', 'budget', 'alpha', 'white', 'trim', 'encoding'];
+const transformIds = ['size', 'x', 'y', 'vertical', 'rotation', 'opacity'];
+let source = null, trimmedSource = null, model = null, quads = [], lines = [], blk = '';
+let basename = 'color_sight', timer, loadId = 0, drag = null;
 const canvas = $('preview'), ctx = canvas.getContext('2d');
 function updateOutputs() {
   document.querySelectorAll('output').forEach(o => { o.value = $(o.htmlFor).value; });
@@ -27,10 +28,6 @@ function background() {
   } else if(mode==='grid') {
     for(let y=0;y<h;y+=24)for(let x=0;x<w;x+=24){ctx.fillStyle=(x/24+y/24)%2?'#343b39':'#252b29';ctx.fillRect(x,y,24,24);}
   } else {ctx.fillStyle=mode==='light'?'#c5c9c2':'#111716';ctx.fillRect(0,0,w,h);}
-  ctx.strokeStyle=mode==='light'?'#344637aa':'#b6c9a29a';ctx.lineWidth=1.2;
-  ctx.beginPath();ctx.moveTo(w/2, h*.18);ctx.lineTo(w/2,h*.46);ctx.moveTo(w/2,h*.54);ctx.lineTo(w/2,h*.84);ctx.moveTo(w*.2,h/2);ctx.lineTo(w*.48,h/2);ctx.moveTo(w*.52,h/2);ctx.lineTo(w*.8,h/2);ctx.stroke();
-  ctx.font='14px Consolas,monospace';ctx.fillStyle=ctx.strokeStyle;
-  for(let i=1;i<5;i++){const y=h/2+i*32;ctx.beginPath();ctx.moveTo(w/2-12,y);ctx.lineTo(w/2+12,y);ctx.stroke();ctx.fillText(String(i*4),w/2+19,y+5);}
 }
 function drawQuads(context, shapes, w, h) {
   const pixel = p => [w/2+p[0]*h/2,h/2+p[1]*h/2];
@@ -39,25 +36,53 @@ function drawQuads(context, shapes, w, h) {
     context.beginPath();q.points.forEach((p,i)=>{const v=pixel(p);if(i===0)context.moveTo(...v);else context.lineTo(...v);});context.closePath();context.fill();
   }
 }
-function redraw() {background();drawQuads(ctx,quads,canvas.width,canvas.height);}
+function drawLines(context, segments, w, h) {
+  context.strokeStyle = '#fff';
+  context.lineWidth = Math.max(1, h / 480);
+  context.beginPath();
+  for (const [x1, y1, x2, y2] of segments) {
+    context.moveTo(w / 2 + x1 * h / 2, h / 2 + y1 * h / 2);
+    context.lineTo(w / 2 + x2 * h / 2, h / 2 + y2 * h / 2);
+  }
+  context.stroke();
+}
+function redraw() {
+  background();
+  drawQuads(ctx, quads, canvas.width, canvas.height);
+  drawLines(ctx, lines, canvas.width, canvas.height);
+}
 function place() {
   updateOutputs();
-  if(model){
-    const options = transformOptions();
-    quads = WTSight.geometry(model, options);
-    blk = WTSight.exportBLK(WTSight.colorTiles(model, options), {glyphScale: $('glyphScale').valueAsNumber});
-    $('code').textContent = blk;
-    $('bytes').textContent = `${(new Blob([blk]).size/1024).toFixed(1)} KB`;
-  }
+  const options = transformOptions();
+  quads = model ? WTSight.geometry(model, options) : [];
+  lines = WTSight.reticleLines($('preset').value, $('reticleSize').valueAsNumber);
+  $('download').disabled = !quads.length && !lines.length;
+  $('mono').disabled = !quads.length;
+  $('png').disabled = $('download').disabled;
+  $('fit').disabled = !quads.length;
+  canvas.classList.toggle('editable', !!quads.length);
+  const budget = Number($('budget').value).toLocaleString();
+  $('count').textContent = `${(model?.textCount ?? 0).toLocaleString()} / ${budget}`;
+  const tiles = model ? WTSight.colorTiles(model, options) : [];
+  blk = $('download').disabled ? '' : WTSight.exportBLK(tiles, {lines, glyphScale: $('glyphScale').valueAsNumber});
+  $('code').textContent = blk;
+  $('bytes').textContent = blk ? `${(new Blob([blk]).size/1024).toFixed(1)} KB` : '—';
   redraw();
 }
 function process() {
   if(!source)return;
   try {
-    model=WTSight.convert(source,{resolution:+$('resolution').value,levels:+$('levels').value,budget:+$('budget').value,alphaThreshold:+$('alpha').value,removeWhite:$('white').checked,colorText:true});
-    $('count').textContent=model.visiblePixels.toLocaleString();$('colors').textContent=model.colors.toLocaleString();$('sampling').textContent=`${model.width} × ${model.height}`;
-    ['download','mono','png'].forEach(id=>$(id).disabled=!model.rects.length);
-    $('status').textContent=!model.rects.length?'没有可见像素，请检查透明度过滤或白色背景选项。':model.reduced?'已自动降低采样精度以满足图元预算。':'图片已转换，可以导出彩色 BLK。';
+    const input = $('trim').checked ? trimmedSource : source;
+    model = WTSight.convert(input, {
+      resolution: +$('resolution').value, levels: +$('levels').value, budget: +$('budget').value,
+      alphaThreshold: +$('alpha').value, removeWhite: $('white').checked,
+      colorText: true, mergeTiles: $('encoding').value === 'merge'
+    });
+    $('colors').textContent = model.colors.toLocaleString();
+    $('sampling').textContent = `${model.width} × ${model.height}`;
+    $('status').textContent = !model.rects.length ? '没有可见像素，请检查透明度过滤。'
+      : model.reduced ? `受图元预算限制，已从请求的 ${Math.min(model.requested, Math.max(input.width, input.height))} px 降至 ${Math.max(model.width, model.height)} px。`
+      : '已在当前预算内完成采样。';
     place();
   }catch(e){$('status').textContent=`转换失败：${e.message}`;}
 }
@@ -67,9 +92,10 @@ function schedule(){
   timer = setTimeout(flushSampling,140);
 }
 function setSource(image,name) {
-  const factor=Math.min(1,512/Math.max(image.width,image.height));
+  const factor=Math.min(1,1024/Math.max(image.width,image.height));
   const c=document.createElement('canvas');c.width=Math.max(1,Math.round(image.width*factor));c.height=Math.max(1,Math.round(image.height*factor));
   const context=c.getContext('2d',{willReadFrequently:true});context.drawImage(image,0,0,c.width,c.height);source=context.getImageData(0,0,c.width,c.height);
+  trimmedSource = WTSight.trimTransparent(source);
   basename=name.replace(/\.[^.]+$/,'').replace(/[^a-zA-Z_]/g,'_').replace(/_+/g,'_').slice(0,60)||'color_sight';
   $('filename').textContent=`${name} · ${image.width} × ${image.height}`;process();
 }
@@ -97,25 +123,77 @@ $('file').addEventListener('change',e=>load(e.target.files[0]));
 samplingIds.forEach(id=>$(id).addEventListener('input',schedule));
 transformIds.forEach(id=>$(id).addEventListener('input',place));
 $('glyphScale').addEventListener('input',place);
+$('preset').addEventListener('change',place);
+$('reticleSize').addEventListener('input',place);
 $('background').addEventListener('change',redraw);
-$('reset').onclick=()=>{Object.entries({size:.65,x:.65,y:.35,rotation:0,opacity:1}).forEach(([k,v])=>$(k).value=v);place();};
+function applyAspect() {
+  const [width, height] = $('aspect').value.split(':').map(Number);
+  canvas.width = Math.round(canvas.height * width / height);
+  $('viewport').style.aspectRatio = `${width} / ${height}`;
+  redraw();
+}
+$('aspect').addEventListener('change', applyAspect);
+$('reset').onclick=()=>{Object.entries({size:.65,x:.65,y:.35,vertical:1,rotation:0,opacity:1,glyphScale:155}).forEach(([k,v])=>$(k).value=v);place();};
+$('fit').onclick = () => {
+  flushSampling();
+  if (!model?.visiblePixels) return;
+  const points = WTSight.geometry(model, { ...transformOptions(), size: 1, x: 0, y: 0 }).flatMap(q => q.points);
+  const bounds = points.reduce((b, [x, y]) => [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)],
+    [Infinity, Infinity, -Infinity, -Infinity]);
+  const [left, top, right, bottom] = bounds;
+  const fit = Math.min(1.8, 1.8 * canvas.width / canvas.height / (right - left), 1.8 / (bottom - top));
+  const scale = Math.floor(fit * 100) / 100;
+  $('size').value = scale;
+  $('x').value = -(left + right) * scale / 2;
+  $('y').value = -(top + bottom) * scale / 2;
+  place();
+};
+canvas.addEventListener('pointerdown', event => {
+  if (!quads.length || !event.isPrimary || event.button !== 0) return;
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY, ox: +$('x').value, oy: +$('y').value };
+  canvas.setPointerCapture(event.pointerId);
+  canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove', event => {
+  if (event.pointerId !== drag?.id) return;
+  const unit = 2 / canvas.getBoundingClientRect().height;
+  $('x').value = drag.ox + (event.clientX - drag.x) * unit;
+  $('y').value = drag.oy + (event.clientY - drag.y) * unit;
+  quads = WTSight.geometry(model, transformOptions());
+  updateOutputs();
+  redraw();
+});
+canvas.addEventListener('lostpointercapture', () => {
+  drag = null;
+  canvas.classList.remove('dragging');
+  place();
+});
 function flushSampling() {
   if (timer === undefined) return;
   clearTimeout(timer);
   timer = undefined;
   process();
 }
-$('download').onclick=()=>{flushSampling();if(model?.visiblePixels)save(blk,`${basename}_color.blk`);};
+$('download').onclick=()=>{flushSampling();if(blk)save(blk,quads.length ? `${basename}_color.blk` : `${$('preset').value}_reticle.blk`);};
 $('mono').onclick=()=>{
   flushSampling();
-  if(quads.length)save(WTSight.exportBLK(quads,{mode:'mono'}),`${basename}_mono_control.blk`);
+  if(quads.length)save(WTSight.exportBLK(quads,{mode:'mono',lines}),`${basename}_mono_control.blk`);
 };
 $('probe').onclick=()=>save(WTSight.exportBLK(WTSight.probe(),{glyphScale:20}),'color_probe.blk');
 $('control').onclick=()=>save(WTSight.exportBLK(WTSight.probe(),{mode:'control'}),'quad_geometry_control.blk');
+$('budgetProbe').onclick = () => {
+  const count = Number($('probeCount').value);
+  save(WTSight.exportBLK(WTSight.budgetProbe(count), {glyphScale: 56}), `budget_probe_${count}.blk`);
+};
 $('png').onclick=()=>{
   flushSampling();
-  if(!quads.length)return;
-  const c=document.createElement('canvas');c.width=1920;c.height=1080;drawQuads(c.getContext('2d'),quads,c.width,c.height);
+  if(!quads.length&&!lines.length)return;
+  const c=document.createElement('canvas');
+  c.height=1080;
+  c.width=Math.round(c.height*canvas.width/canvas.height);
+  const context=c.getContext('2d');
+  drawQuads(context,quads,c.width,c.height);
+  drawLines(context,lines,c.width,c.height);
   c.toBlob(blob=>{if(blob)save(blob,`${basename}_preview.png`);});
 };
 $('demo').onclick=()=>{
@@ -128,4 +206,5 @@ $('demo').onclick=()=>{
   g.fillStyle='#e584a1';g.beginPath();g.moveTo(75,105);g.lineTo(94,105);g.lineTo(84,116);g.fill();g.fillStyle='#f0bc57';g.fillRect(60,138,47,10);g.fillStyle='#e584a1';g.fillRect(78,138,12,18);
   setSource(c,'chroma_cat.png');
 };
-updateOutputs();redraw();
+applyAspect();
+place();

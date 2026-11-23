@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {convert,geometry,colorTiles,exportBLK,probe} = require('../dist/core.js');
+const {convert,trimTransparent,geometry,colorTiles,reticleLines,exportBLK,probe,budgetProbe} = require('../dist/core.js');
 function image(width,height,fn){return {width,height,data:Uint8ClampedArray.from(Array.from({length:width*height},(_,i)=>fn(i%width,Math.floor(i/width))).flat())};}
 test('merging preserves all visible pixels without overlaps, including transparent holes',()=>{
   let seed=12345;
@@ -52,3 +52,54 @@ test('text budget counts visible pixels even when they merge into one preview re
   assert.equal(new Set(tiles.map(q=>q.points[0].join(','))).size,tiles.length);
 });
 test('invalid input is rejected',()=>{assert.throws(()=>convert({width:0,height:1,data:[]}));assert.throws(()=>geometry(convert(image(1,1,()=>[0,0,0,255])),{x:NaN,size:0}));});
+test('flat colors retain more detail under the same glyph budget without crossing edges',()=>{
+  const input=image(64,64,(x)=>x<31?[255,0,0,255]:[0,0,255,255]);
+  const options={resolution:64,levels:256,budget:500,colorText:true};
+  const pixels=convert(input,options);
+  const merged=convert(input,{...options,mergeTiles:true});
+  assert.equal(merged.width,64);
+  assert.ok(pixels.width<merged.width);
+  assert.ok(merged.textCount<=500);
+  const coverage=new Uint8Array(64*64);
+  for(const tile of merged.tiles) {
+    assert.equal(tile.w,tile.h);
+    for(let y=tile.y;y<tile.y+tile.h;y++) for(let x=tile.x;x<tile.x+tile.w;x++){
+      assert.equal(coverage[y*64+x]++,0);
+      assert.equal(tile.color[0],input.data[(y*64+x)*4]);
+    }
+  }
+  assert.ok(coverage.every(count=>count===1));
+  assert.equal((exportBLK(colorTiles(merged)).match(/  text \{/g)||[]).length,merged.textCount);
+});
+test('transparent margins are cropped and vertical correction moves only the image',()=>{
+  const cropped=trimTransparent(image(10,8,(x,y)=>x>=4&&x<6&&y>=2&&y<5?[255,0,0,255]:[0,0,0,0]));
+  assert.deepEqual([cropped.width,cropped.height],[2,3]);
+  const model=convert(cropped);
+  const [q]=geometry(model,{size:1,vertical:1.5,y:.25});
+  assert.equal(q.points[0][1],-.5);
+  assert.equal(q.points[2][1],1);
+});
+test('independent basic reticle can export alone or with the image',()=>{
+  const lines=reticleLines('cross',2);
+  const alone=exportBLK([],{lines});
+  assert.match(alone,/line:p4=-0\.38, 0, -0\.064, 0/);
+  assert.doesNotMatch(alone,/drawTexts/);
+  const combined=exportBLK(probe(),{lines});
+  assert.match(combined,/drawLines/);
+  assert.match(combined,/drawTexts/);
+});
+test('budget probes retain fixed early and late corner markers at different counts',()=>{
+  const low=budgetProbe(256), high=budgetProbe(7900);
+  assert.equal(low.length,256);
+  assert.equal(high.length,7900);
+  assert.deepEqual(low.slice(0,4),high.slice(0,4));
+  assert.deepEqual(low.slice(-4),high.slice(-4));
+  assert.notDeepEqual(low[0].color,low.at(-1).color);
+  assert.equal((exportBLK(low).match(/  text \{/g)||[]).length,256);
+});
+test('the first exported tiles span the whole image rather than its first rows',()=>{
+  const model=convert(image(16,16,()=>[255,0,0,255]),{colorText:true,budget:256});
+  const early=colorTiles(model,{size:1}).slice(0,64);
+  const quadrants=new Set(early.map(({points:[a]})=>[a[0]<0,a[1]<0].join(',')));
+  assert.equal(quadrants.size,4);
+});
