@@ -1,0 +1,7 @@
+{
+  "name": "image-to-wt-sight-color",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline color sight converter for War Thunder",
+  "scripts": { "test": "node --test tests/core.test.cjs", "start": "node server.cjs" }
+}

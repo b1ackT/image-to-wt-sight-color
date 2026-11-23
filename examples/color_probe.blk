@@ -1,0 +1,17 @@
+// Image to WT Sight Color
+drawCentralLineVert:b=no
+drawCentralLineHorz:b=no
+drawSightMask:b=no
+drawDistanceCorrection:b=no
+crosshairColor:c=255, 255, 255, 255
+crosshairLightColor:c=255, 255, 255, 255
+matchExpClass { exp_tank:b=yes; exp_heavy_tank:b=yes; exp_tank_destroyer:b=yes; exp_SPAA:b=yes; }
+crosshair_distances {}
+crosshair_hor_ranges {}
+fontSizeMult:r=1
+drawTexts {
+  text {text:t="〓"; align:i=0; pos:p2=-0.48, 0; move:b=false; size:r=4.8; color:c=255, 0, 0, 255; highlight:b=no;}
+  text {text:t="〓"; align:i=0; pos:p2=-0.16, 0; move:b=false; size:r=4.8; color:c=0, 255, 0, 255; highlight:b=no;}
+  text {text:t="〓"; align:i=0; pos:p2=0.16, 0; move:b=false; size:r=4.8; color:c=0, 0, 255, 255; highlight:b=no;}
+  text {text:t="〓"; align:i=0; pos:p2=0.48, 0; move:b=false; size:r=4.8; color:c=255, 255, 0, 128; highlight:b=no;}
+}
