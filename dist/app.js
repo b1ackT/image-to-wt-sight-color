@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const samplingIds = ['resolution', 'levels', 'budget', 'alpha', 'white', 'trim', 'encoding'];
+const samplingIds = ['resolution', 'levels', 'budget', 'alpha', 'white', 'trim', 'encoding', 'tolerance'];
 const transformIds = ['size', 'x', 'y', 'vertical', 'rotation', 'opacity'];
 let source = null, trimmedSource = null, model = null, quads = [], lines = [], blk = '';
 let basename = 'color_sight', timer, loadId = 0, drag = null;
@@ -46,6 +46,11 @@ function drawLines(context, segments, w, h) {
   }
   context.stroke();
 }
+function previewGeometry() {
+  if (!model) return [];
+  const preview = model.greedy ? { ...model, rects: model.tiles } : model;
+  return WTSight.geometry(preview, transformOptions());
+}
 function redraw() {
   background();
   drawQuads(ctx, quads, canvas.width, canvas.height);
@@ -54,7 +59,7 @@ function redraw() {
 function place() {
   updateOutputs();
   const options = transformOptions();
-  quads = model ? WTSight.geometry(model, options) : [];
+  quads = previewGeometry();
   lines = WTSight.reticleLines($('preset').value, $('reticleSize').valueAsNumber);
   $('download').disabled = !quads.length && !lines.length;
   $('mono').disabled = !quads.length;
@@ -73,11 +78,14 @@ function process() {
   if(!source)return;
   try {
     const input = $('trim').checked ? trimmedSource : source;
+    const encoding = $('encoding').value;
     model = WTSight.convert(input, {
       resolution: +$('resolution').value, levels: +$('levels').value, budget: +$('budget').value,
       alphaThreshold: +$('alpha').value, removeWhite: $('white').checked,
-      colorText: true, mergeTiles: $('encoding').value === 'merge'
+      colorText: true, mergeTiles: encoding === 'merge', greedy: encoding === 'greedy',
+      tolerance: $('tolerance').valueAsNumber
     });
+    model.greedy = encoding === 'greedy';
     $('colors').textContent = model.colors.toLocaleString();
     $('sampling').textContent = `${model.width} × ${model.height}`;
     $('status').textContent = !model.rects.length ? '没有可见像素，请检查透明度过滤。'
@@ -88,6 +96,7 @@ function process() {
 }
 function schedule(){
   updateOutputs();
+  $('greedySettings').hidden = $('encoding').value !== 'greedy';
   clearTimeout(timer);
   timer = setTimeout(flushSampling,140);
 }
@@ -159,7 +168,7 @@ canvas.addEventListener('pointermove', event => {
   const unit = 2 / canvas.getBoundingClientRect().height;
   $('x').value = drag.ox + (event.clientX - drag.x) * unit;
   $('y').value = drag.oy + (event.clientY - drag.y) * unit;
-  quads = WTSight.geometry(model, transformOptions());
+  quads = previewGeometry();
   updateOutputs();
   redraw();
 });
@@ -177,7 +186,7 @@ function flushSampling() {
 $('download').onclick=()=>{flushSampling();if(blk)save(blk,quads.length ? `${basename}_color.blk` : `${$('preset').value}_reticle.blk`);};
 $('mono').onclick=()=>{
   flushSampling();
-  if(quads.length)save(WTSight.exportBLK(quads,{mode:'mono',lines}),`${basename}_mono_control.blk`);
+  if(quads.length)save(WTSight.exportBLK(WTSight.geometry(model, transformOptions()),{mode:'mono',lines}),`${basename}_mono_control.blk`);
 };
 $('probe').onclick=()=>save(WTSight.exportBLK(WTSight.probe(),{glyphScale:20}),'color_probe.blk');
 $('control').onclick=()=>save(WTSight.exportBLK(WTSight.probe(),{mode:'control'}),'quad_geometry_control.blk');

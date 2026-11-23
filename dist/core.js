@@ -44,7 +44,12 @@
       }
       const visiblePixels = rects.reduce((sum, rect) => sum + rect.w * rect.h, 0);
       result = { width, height, rects, visiblePixels, colors: colors.size, requested, resolution, reduced: resolution < requested };
-      result.tiles = options.colorText && options.mergeTiles ? squareTiles(rects) : null;
+      result.tiles = options.colorText && options.greedy
+        ? greedyTiles(pixels, width, height, clamp(options.tolerance ?? 20, 0, 64))
+        : options.colorText && options.mergeTiles ? squareTiles(rects) : null;
+      if (options.colorText && options.greedy) {
+        result.colors = new Set(result.tiles.map(tile => tile.color.join(','))).size;
+      }
       result.textCount = result.tiles?.length ?? visiblePixels;
       const count = options.colorText ? result.textCount : rects.length;
       if (count <= budget || resolution === 1) return result;
@@ -68,6 +73,57 @@
       add(x, y + rows, width, height - rows, color);
     }
     for (const rect of rects) add(rect.x, rect.y, rect.w, rect.h, rect.color);
+    return tiles;
+  }
+
+  function greedyTiles(pixels, width, height, tolerance) {
+    const palette = new Map();
+    const colors = Array.from(pixels, key => {
+      if (!key) return null;
+      if (!palette.has(key)) palette.set(key, key.split(',').map(Number));
+      return palette.get(key);
+    });
+    const used = new Uint8Array(colors.length);
+    const tiles = [];
+
+    function fit(x, y, size, first) {
+      let minR = first[0], minG = first[1], minB = first[2];
+      let maxR = minR, maxG = minG, maxB = minB;
+      let sumR = 0, sumG = 0, sumB = 0;
+      const alpha = first[3];
+      for (let dy = 0; dy < size; dy++) {
+        const start = (y + dy) * width + x;
+        for (let i = start; i < start + size; i++) {
+          const color = colors[i];
+          if (used[i] || !color || color[3] !== alpha) return null;
+          const [r, g, b] = color;
+          minR = Math.min(minR, r); maxR = Math.max(maxR, r);
+          minG = Math.min(minG, g); maxG = Math.max(maxG, g);
+          minB = Math.min(minB, b); maxB = Math.max(maxB, b);
+          if (Math.max(maxR - minR, maxG - minG, maxB - minB) > tolerance) return null;
+          sumR += r; sumG += g; sumB += b;
+        }
+      }
+      const area = size * size;
+      return [sumR, sumG, sumB].map(sum => Math.round(sum / area)).concat(alpha);
+    }
+
+    for (const size of [8, 6, 4, 3, 2, 1]) {
+      for (let y = 0; y + size <= height; y++) {
+        for (let x = 0; x + size <= width; x++) {
+          const index = y * width + x;
+          const first = colors[index];
+          if (!first || used[index]) continue;
+          const color = size === 1 ? first : fit(x, y, size, first);
+          if (!color) continue;
+          for (let dy = 0; dy < size; dy++) {
+            const start = index + dy * width;
+            used.fill(1, start, start + size);
+          }
+          tiles.push({ x, y, w: size, h: size, color });
+        }
+      }
+    }
     return tiles;
   }
 

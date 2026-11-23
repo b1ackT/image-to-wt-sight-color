@@ -103,3 +103,30 @@ test('the first exported tiles span the whole image rather than its first rows',
   const quadrants=new Set(early.map(({points:[a]})=>[a[0]<0,a[1]<0].join(',')));
   assert.equal(quadrants.size,4);
 });
+test('greedy fitting preserves the full sample under budget and respects alpha holes and color edges',()=>{
+  const input = image(64,64,(x,y) => {
+    if (x>=28 && x<36 && y>=28 && y<36) return [0,0,0,0];
+    return [x<32 ? 32+y%8 : 200+y%8, x%8, 70, y<16 ? 153 : 255];
+  });
+  const options = {resolution:64,levels:256,budget:256,colorText:true};
+  const merged = convert(input,{...options,mergeTiles:true});
+  const fitted = convert(input,{...options,greedy:true,tolerance:8});
+  assert.equal(fitted.width,64);
+  assert.ok(fitted.width>merged.width && fitted.textCount<=256);
+  assert.equal((exportBLK(colorTiles(fitted)).match(/  text \{/g)||[]).length,fitted.textCount);
+  const covered = new Uint8Array(64*64);
+  for (const tile of fitted.tiles) {
+    assert.equal(tile.w,tile.h);
+    for (let y=tile.y;y<tile.y+tile.h;y++) for (let x=tile.x;x<tile.x+tile.w;x++) {
+      const pixel = y*64+x;
+      assert.equal(covered[pixel]++,0);
+      assert.equal(tile.color[3],input.data[pixel*4+3]);
+      for (let channel=0;channel<3;channel++) {
+        assert.ok(Math.abs(tile.color[channel]-input.data[pixel*4+channel])<=8);
+      }
+    }
+  }
+  assert.ok(covered.every((count,index)=>count===Number(input.data[index*4+3]>0)));
+  const exact = convert(input,{...options,budget:5000,greedy:true,tolerance:0});
+  assert.ok(exact.tiles.every(tile=>tile.w===1));
+});

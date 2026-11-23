@@ -21,7 +21,11 @@
         <label class="check"><input id="trim" type="checkbox" checked>裁掉全透明留白</label>
         <label>请求采样长边 <output for="resolution"></output><input id="resolution" type="range" min="16" max="512" step="8" value="256"></label>
         <label>图元预算 <select id="budget"><option>256</option><option selected>500</option><option>1000</option><option>2000</option><option>5000</option><option>7900</option></select></label>
-        <label>彩色编码 <select id="encoding"><option value="pixel">逐像素</option><option value="merge">同色合并（试验）</option></select></label>
+        <label>彩色编码 <select id="encoding"><option value="pixel">逐像素</option><option value="merge">同色合并（试验）</option><option value="greedy">贪心拟合（试验）</option></select></label>
+        <div id="greedySettings" hidden>
+          <label>颜色容差 <output for="tolerance"></output><input id="tolerance" type="range" min="0" max="64" step="1" value="20"></label>
+          <p class="hint">容差越高，越容易用大字形覆盖相近颜色，也越可能丢失色彩细节。</p>
+        </div>
         <p class="hint">合并适合色块图案。游戏中大、小字形的覆盖可能不同。</p>
         <details><summary>颜色与透明度</summary>
           <label>每通道色阶 <select id="levels"><option value="4">4 级</option><option value="8">8 级</option><option value="16" selected>16 级</option><option value="256">保留 RGB 原色</option></select></label>
